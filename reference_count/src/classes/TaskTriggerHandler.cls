@@ -14,7 +14,7 @@ public class TaskTriggerHandler extends TriggerManager.TriggerHandler {
     public override void onBeforeDelete(List<sObject> oldRecords, Map<ID, sObject> oldRecordsMap) {}
     */
     public override void onAfterInsert(List<sObject> newRecords, Map<ID, sObject> newRecordsMap) {
-        increaseReferenceCount(newRecords);
+        increaseReferenceCountOnInsert(newRecords);
     }
 
     public override void onAfterUpdate(List<sObject> oldRecords,
@@ -22,6 +22,7 @@ public class TaskTriggerHandler extends TriggerManager.TriggerHandler {
                                        Map<ID, sObject> oldRecordsMap,
                                        Map<ID, sObject> newRecordsMap) {
         decreaseReferenceCountOnTaskTypeChange(newRecords, oldRecordsMap);
+        increaseReferenceCountOnUpdate(newRecords, oldRecordsMap);
     }
 
 
@@ -29,13 +30,24 @@ public class TaskTriggerHandler extends TriggerManager.TriggerHandler {
        decreaseReferenceCountOnTaskTypeChange(oldRecords, null);
     }
 
-
     // HANDLERS methods ------------------------------------------------------------------------------------------------
 
-    private static void increaseReferenceCount(List<sObject> newRecords) {
+    private static void increaseReferenceCountOnInsert(List<sObject> newRecords) {
         List<sObject> taskRelatedToContact = new List<sObject>();
         for (SObject obj : newRecords) {
             if (((String)obj.get('WhoId')).startsWith(CONTACT_RECORDS_PREFIX) && ((String)obj.get('Type')) == LOG_A_CALL_TYPE) {
+                taskRelatedToContact.add(obj);
+            }
+        }
+        updateReferenceCountField(taskRelatedToContact, true);
+    }
+
+    private static void increaseReferenceCountOnUpdate(List<sObject> newRecords, Map<ID, sObject> oldRecordsMap) {
+        List<sObject> taskRelatedToContact = new List<sObject>();
+        for (SObject obj : newRecords) {
+            if (((String)obj.get('WhoId')).startsWith(CONTACT_RECORDS_PREFIX)
+                && ((String)obj.get('Type')) == LOG_A_CALL_TYPE
+                && ((String)(oldRecordsMap.get((Id)obj.get('Id'))).get('Type')) != LOG_A_CALL_TYPE) {
                 taskRelatedToContact.add(obj);
             }
         }
@@ -60,7 +72,7 @@ public class TaskTriggerHandler extends TriggerManager.TriggerHandler {
     }
 
     private static void updateReferenceCountField(List<sObject> tasks, Boolean isIncrement) {
-        Map<Id, List<sObject>> tasksByContact = ILC_Utils.splitListBySpecialKey(tasks, 'WhoId');
+        Map<Id, List<sObject>> tasksByContact = splitListBySpecialKey(tasks, 'WhoId');
         List<Contact> relatedContactsForUpdateCountField = [SELECT Id, Reference_Count__c, AccountId
                                                             FROM Contact
                                                             WHERE Id IN: tasksByContact.keySet()];
@@ -113,5 +125,29 @@ public class TaskTriggerHandler extends TriggerManager.TriggerHandler {
         }
         update relatedContactsForUpdateCountField;
     }
+
+    public static Map<Id, List<sObject>> splitListBySpecialKey(List<sObject> sourceList, String key) {
+        if (sourceList == null) {
+            throw new IncorrectParameterException('ERROR: splitListBySpecialKey(sourceList, key) got incorrect first parameter.');
+        }
+        if (String.isBlank(key)) {
+            throw new IncorrectParameterException('ERROR: splitListBySpecialKey(sourceList, key) got incorrect second parameter.');
+        }
+        Map<Id, List<sObject>> result = new Map<Id, List<sObject>>();
+        List<sObject> tmpObjs;
+        for (sObject obj : sourceList) {
+            tmpObjs = new List<sObject>();
+            if (obj.get(key) != null && result.containsKey((Id)obj.get(key))) {
+                tmpObjs = result.get((Id)obj.get(key));
+                tmpObjs.add(obj);
+                result.put((Id)obj.get(key), tmpObjs);
+            } else if (obj.get(key) != null) {
+                tmpObjs.add(obj);
+                result.put((Id)obj.get(key), tmpObjs);
+            }
+        }
+        return result;
+    }
+    public class IncorrectParameterException extends System.Exception {}
 
 }
